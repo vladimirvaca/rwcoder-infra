@@ -1,0 +1,11 @@
+# Real env files hold secrets; only the committed .env.example templates
+# document the variables.
+.env
+apps/*/.env
+
+# Real htpasswd file for the Traefik dashboard; only the .example template
+# is committed.
+traefik/dashboard-users.htpasswd
+
+.idea/
+*.iml

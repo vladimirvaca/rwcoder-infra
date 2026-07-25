@@ -1,0 +1,52 @@
+# Shared dynamic middlewares, loaded via Traefik's file provider.
+# Reference from any app's labels as `<name>@file`, e.g.:
+#   traefik.http.routers.books.middlewares=compress@file,secure-headers@file,rate-limit@file
+#
+# Traefik watches this directory (`--providers.file.watch=true`), so edits
+# here apply live — no container restart needed.
+http:
+  middlewares:
+    compress:
+      compress: {}
+
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # Allow same-origin framing but block third-party clickjacking.
+        # Switch to frameDeny: true for apps that are never iframed at all.
+        customFrameOptionsValue: "SAMEORIGIN"
+
+    # Per-client-IP request throttle. Traefik sits directly on the internet
+    # here (no upstream CDN/proxy), so the TCP peer address IS the real client
+    # IP and the default sourceCriterion is correct as-is.
+    #
+    # A single small VM shares CPU across every app, so the point is less
+    # "stop a determined DDoS" — you can't, upstream of the box — than to stop
+    # one scraper or a login brute-forcer from starving the other apps.
+    # 50 req/s sustained is far above what a personal app sees organically;
+    # raise `average` if an app legitimately bursts (many small static assets
+    # on one page load, say) and you see 429s in normal use.
+    rate-limit:
+      rateLimit:
+        average: 50
+        burst: 100
+        period: 1s
+
+    # Optional: lock a router to your own IP(s) — useful for the Traefik
+    # dashboard as defence-in-depth behind basic auth. Left commented because
+    # a wrong CIDR here locks YOU out, and home IPs are usually dynamic.
+    #
+    # To use: uncomment, replace with your real address (check with
+    # `curl -s ifconfig.me`), and append `internal-only@file` to the
+    # dashboard router's middlewares list in docker-compose.yml.
+    #
+    # internal-only:
+    #   ipAllowList:
+    #     sourceRange:
+    #       - "203.0.113.4/32"

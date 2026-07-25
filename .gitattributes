@@ -1,0 +1,16 @@
+# This repo is edited on Windows but every file in it executes on Ubuntu.
+# Without this, git's autocrlf checks out shell scripts with CRLF endings and
+# the kernel reads the shebang as `/usr/bin/env bash\r` -> "bad interpreter:
+# no such file or directory". The same trailing \r silently corrupts .env
+# values and htpasswd hashes. Force LF for everything that ships to the host.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.env.example text eol=lf
+*.htpasswd text eol=lf
+*.htpasswd.example text eol=lf
+
+# Keep script permissions meaningful on checkout.
+*.sh linguist-language=Shell

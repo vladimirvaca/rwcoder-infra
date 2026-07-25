@@ -1,0 +1,114 @@
+# Core stack: Traefik (reverse proxy / TLS) + Watchtower (auto-updates).
+# Deploy once per host, before any app stack. See CLAUDE.md for the full
+# architecture and README.md "Prerequisites" for one-time host setup.
+#
+#   docker network create traefik-public   # once, before first `up`
+#   docker compose up -d
+
+networks:
+  traefik-public:
+    external: true
+
+volumes:
+  traefik-letsencrypt:
+
+services:
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--log.level=${TRAEFIK_LOG_LEVEL:-INFO}"
+      - "--global.sendAnonymousUsage=false"
+      - "--global.checknewversion=false"
+      - "--api.dashboard=true"
+      # Exposes an unauthenticated /ping on the traefik entrypoint only
+      # (not routed publicly) so the container healthcheck below can use it.
+      - "--ping=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.network=traefik-public"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Let's Encrypt production has hard rate limits (5 failed authz/hour per
+      # account+host, 50 certs/week per domain). Point ACME_CASERVER at the
+      # staging directory while shaking out DNS/firewall problems. To switch
+      # back: comment it out in .env, delete the staging state
+      # (`docker compose exec traefik rm /letsencrypt/acme.json`), then
+      # `docker compose up -d --force-recreate traefik`.
+      - "--certificatesresolvers.letsencrypt.acme.caserver=${ACME_CASERVER:-https://acme-v02.api.letsencrypt.org/directory}"
+    ports:
+      - "80:80"
+      - "443:443"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./traefik/dashboard-users.htpasswd:/etc/traefik/dashboard-users.htpasswd:ro
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      # Order matters: rate-limit and headers apply before the auth prompt, so
+      # a brute-force attempt against the dashboard is throttled too. Add
+      # `internal-only@file` here as well if you lock it to your own IP —
+      # see traefik/dynamic/middlewares.yml.
+      - "traefik.http.routers.traefik-dashboard.middlewares=rate-limit@file,secure-headers@file,traefik-dashboard-auth"
+      - "traefik.http.middlewares.traefik-dashboard-auth.basicauth.usersfile=/etc/traefik/dashboard-users.htpasswd"
+    # Cap memory so the proxy can never starve the host. Honoured by
+    # `docker compose` (v2) outside swarm. Tuned for a ~1GB instance; lower
+    # on a 512MB plan. Host swap (see README prerequisites) is the safety net.
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  watchtower:
+    # Pinned deliberately. Watchtower is the one container that can restart
+    # every other container on the host; letting it float on :latest means an
+    # upstream regression can silently take the whole VM's apps down, and
+    # nothing else is watching *it*. Bump this by hand after reading the
+    # release notes.
+    image: containrrr/watchtower:1.7.1
+    container_name: watchtower
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: ${TZ:-UTC}
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-3600}
+      WATCHTOWER_ROLLING_RESTART: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Needed only if any watched image is private (e.g. GHCR default
+      # visibility). `docker login ghcr.io` on the host first. See
+      # CLAUDE.md "Private images (GHCR)".
+      # - ${HOME}/.docker/config.json:/config.json:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128M

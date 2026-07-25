@@ -1,0 +1,67 @@
+# Template for a new app stack. Copy the whole folder, then find/replace:
+#
+#   cp -r apps/_template apps/my-app
+#   #  myapp  -> your app's short name (router/service/volume/env prefix)
+#   #  my-app -> the folder + container name
+#   #  sub    -> the subdomain it answers on (sub.${DOMAIN})
+#
+# Router and service names are GLOBAL inside Traefik — two apps both calling a
+# router `web` silently collide and one wins. Prefixing with the app name is
+# what keeps stacks independent.
+#
+# Deploy (core stack must already be up):
+#   docker compose -f apps/my-app/docker-compose.yml up -d
+# or:
+#   scripts/deploy-app.sh my-app
+
+networks:
+  traefik-public:
+    external: true
+
+volumes:
+  # Named volume, never a bind-mount into this repo: app data must survive
+  # `git pull`, container recreates, and Watchtower updates.
+  myapp-data:
+
+services:
+  web:
+    image: ${MYAPP_IMAGE:-ghcr.io/vladimirvaca/my-app:latest}
+    container_name: my-app
+    restart: unless-stopped
+    environment:
+      # Prefix every app-specific var with the app name so two stacks sharing
+      # the host can't collide in each other's .env files.
+      MYAPP_SECRET_KEY: ${MYAPP_SECRET_KEY}
+    volumes:
+      - myapp-data:/data
+    networks:
+      - traefik-public
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.myapp.rule=Host(`sub.${DOMAIN}`)"
+      - "traefik.http.routers.myapp.entrypoints=websecure"
+      - "traefik.http.routers.myapp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.myapp.middlewares=compress@file,secure-headers@file,rate-limit@file"
+      # The port the app listens on INSIDE the container. Nothing is published
+      # to the host — Traefik reaches it over the traefik-public network.
+      - "traefik.http.services.myapp.loadbalancer.server.port=8000"
+      # Opt into Watchtower auto-updates. Namespace is `centurylinklabs`;
+      # a typo means the container is silently never updated.
+      - "com.centurylinklabs.watchtower.enable=true"
+    # Adjust to the app's real footprint. The point is blast radius: one app
+    # must not be able to OOM Traefik or the host. Sum of all limits should
+    # leave headroom under the instance's RAM.
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    # Strongly recommended — give the app a cheap liveness endpoint. Use a
+    # runtime that's actually in the image (python3/node/curl vary by base).
+    # healthcheck:
+    #   test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+    #   interval: 60s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
