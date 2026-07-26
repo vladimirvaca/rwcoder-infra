@@ -218,11 +218,16 @@ rather than raw throughput. The measures, and why:
   driver never rotates; on a ~20–40GB SSD a chatty container will eventually
   fill the disk and take the whole host down. Setting it at the daemon level
   means every app inherits it — no per-service `logging:` block needed.
-- **Swap file** (2GB, created during host prep, `vm.swappiness=10`).
-  The riskiest moment on a 512MB box is a Watchtower update: pulling a new
-  image while the old container is still running spikes memory. Swap turns
-  a would-be OOM-kill into a brief slowdown. `swappiness=10` keeps hot app
-  pages in RAM and only leans on swap under real pressure.
+- **Swap file** (2GB, `vm.swappiness=10`) — **plan-dependent, not
+  unconditional**: required on 512MB (the per-container limits alone exceed
+  the RAM), cheap insurance on 1GB, skip at 2GB+ where it can cost more
+  latency than it saves. Lightsail's Ubuntu images ship with none, so it's
+  genuinely absent unless added. The tightest moment is a Watchtower update
+  — the new image is pulled while the old container still serves, then they
+  swap — which is a real but modest bump, not the double-memory spike it's
+  sometimes described as. `swappiness=10` keeps hot app pages in RAM and
+  only leans on swap under actual pressure. See README step 4 for the
+  per-plan call.
 - **Per-container memory limits** (`deploy.resources.limits.memory`,
   honoured by Compose v2 outside swarm): Traefik 192M, Watchtower 128M,
   book-reservation 320M. These cap the blast radius so one app can't starve
