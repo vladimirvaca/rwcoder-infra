@@ -14,7 +14,15 @@ volumes:
 
 services:
   traefik:
-    image: traefik:v3.3
+    # Minor-level pin: `docker compose pull` picks up patch releases (security
+    # fixes) but never a minor bump you didn't choose.
+    #
+    # Must be >= 3.6.1. Docker Engine 29 raised the daemon's minimum API
+    # version to 1.44; Traefik's Docker provider used to request 1.24 and got
+    # "client version 1.24 is too old", so container discovery failed
+    # completely — no routers, no routing. 3.6.1 added API version
+    # negotiation against the daemon. Do not pin below this on Docker 29+.
+    image: traefik:v3.7
     container_name: traefik
     restart: unless-stopped
     command:
@@ -84,12 +92,20 @@ services:
           memory: 192M
 
   watchtower:
-    # Pinned deliberately. Watchtower is the one container that can restart
-    # every other container on the host; letting it float on :latest means an
-    # upstream regression can silently take the whole VM's apps down, and
-    # nothing else is watching *it*. Bump this by hand after reading the
-    # release notes.
-    image: containrrr/watchtower:1.7.1
+    # This is the MAINTAINED FORK, not the original containrrr/watchtower.
+    # The original was archived and its embedded Docker client (1.25) is below
+    # the minimum API version 1.44 that Docker Engine 29 requires, so it fails
+    # with "client version 1.25 is too old" and never updates anything. No
+    # upstream fix is coming. This fork migrated to the moby/moby split
+    # packages in 1.17.1 specifically for Docker 29 and negotiates the API
+    # version automatically. Config, env vars, and labels are unchanged —
+    # including the com.centurylinklabs.* label namespace.
+    #
+    # Pinned deliberately: this is the one container that can restart every
+    # other container on the host, and nothing is watching *it*. Bump by hand
+    # after reading the release notes.
+    #   Also published as ghcr.io/nicholas-fedor/watchtower
+    image: nickfedor/watchtower:1.20.1
     container_name: watchtower
     restart: unless-stopped
     security_opt:

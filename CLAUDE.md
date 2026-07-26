@@ -59,6 +59,13 @@ Goals driving every decision here:
 
 ## Reverse proxy: Traefik
 
+- **Minimum Traefik version is 3.6.1** — pinned here at minor level
+  (`traefik:v3.7`) so `docker compose pull` takes patch releases but never a
+  minor bump. Docker Engine 29 raised the daemon's minimum API version to
+  1.44, and Traefik's Docker provider previously requested 1.24; the
+  mismatch kills container discovery outright (`client version 1.24 is too
+  old` — no routers registered, every host 404s). 3.6.1 added API version
+  negotiation. Never pin below it on Docker 29+.
 - Two entrypoints: `web` (80, redirects to 443) and `websecure` (443).
 - Docker provider with `exposedByDefault=false` — only containers with
   `traefik.enable=true` are ever routed to. This means adding a new app is
@@ -90,6 +97,16 @@ Goals driving every decision here:
 
 ## Auto-updates: Watchtower
 
+- **Which Watchtower:** `nickfedor/watchtower` (also
+  `ghcr.io/nicholas-fedor/watchtower`), the maintained fork — *not* the
+  original `containrrr/watchtower`, which is archived. The original embeds
+  Docker client 1.25, below the minimum API version 1.44 that Docker Engine
+  29 requires, so on a current host it fails with `client version 1.25 is
+  too old` and silently updates nothing. No upstream fix is coming. The
+  fork moved to the moby/moby split packages in 1.17.1 for Docker 29 and
+  negotiates the API version. Config, env vars, and the
+  `com.centurylinklabs.*` label namespace are all unchanged, so the swap is
+  drop-in.
 - Runs in the core stack, polling on `WATCHTOWER_POLL_INTERVAL` (seconds,
   default 3600 = hourly). Hourly is deliberate: 5-minute polling means
   ~288 registry checks/day per image, needless CPU wakeups, and GHCR

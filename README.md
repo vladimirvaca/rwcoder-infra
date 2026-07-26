@@ -103,6 +103,16 @@ docker --version && docker compose version
 `docker compose version` (space, not hyphen) must work — everything here uses
 Compose v2 syntax.
 
+> **Docker 29+ compatibility.** Docker Engine 29 raised the daemon's minimum
+> API version to 1.44, which broke every tool embedding an older Docker
+> client. The core stack accounts for this, but only at these versions or
+> above — don't pin either one lower:
+>
+> | | Minimum | Why |
+> |---|---|---|
+> | `traefik` | **3.6.1** | Earlier versions request API 1.24; container discovery fails completely, so no routers register and every host 404s. 3.6.1 added API negotiation. |
+> | Watchtower | **the `nickfedor` fork** | The original `containrrr/watchtower` is archived and permanently broken on Docker 29 — it fails with `client version 1.25 is too old` and silently updates nothing. |
+
 ## 4. Host tuning (log rotation + swap)
 
 Two separate measures with different urgency — don't treat them as one step:
@@ -519,6 +529,17 @@ names the offending line in both cases.
 - **Traefik container won't start at all:** most often
   `traefik/dashboard-users.htpasswd` doesn't exist. It's a bind mount, so
   Docker fails the container outright. Check `docker compose logs traefik`.
+- **`client version 1.24 is too old. Minimum supported API version is 1.40`
+  (or `1.25` / `1.44`) in Traefik or Watchtower logs:** Docker Engine 29
+  raised the daemon's minimum API version, and the container's embedded
+  Docker client is older. Symptom is total failure of that component —
+  Traefik registers no routers at all (so *every* host 404s), Watchtower
+  updates nothing. Fix is the versions in Part 1 step 3: `traefik:v3.7` and
+  the `nickfedor/watchtower` fork.
+  ```bash
+  docker version --format '{{.Server.APIVersion}}'   # daemon's API version
+  git pull && docker compose up -d                   # take the pinned fixes
+  ```
 - **404 from Traefik:** the container must be on the `traefik-public` network
   *and* carry `traefik.enable=true`, and router/service names must be unique
   across all apps. `docker network inspect traefik-public` shows who's
