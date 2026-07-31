@@ -95,6 +95,59 @@ Goals driving every decision here:
   sequences as (undefined) variable references and silently strip parts
   of the hash. A mounted file sidesteps the problem entirely.
 
+## Catch-all for unrouted subdomains
+
+A wildcard `*.DOMAIN` A record means *every* subdomain resolves to the
+instance, whether an app answers on it or not — and any stranger can point
+their own domain at the IP. Without a catch-all all of those get Traefik's
+bare `404 page not found` in Times New Roman. Instead, a catch-all router
+302-redirects them to the `/dev/null` page on the apex site (the
+cover-letter project, hosted on Netlify — **not** on this VM):
+`https://DOMAIN/dev/null?from=<subdomain>`.
+
+- **Implemented as labels on the `traefik` service itself** in the core
+  compose file: router `unrouted` plus redirectRegex middleware
+  `unrouted-redirect`. No container backs it — the router's service is
+  `noop@internal`, and the middleware answers every request with the
+  redirect before a backend would matter.
+- **How the fall-through works:** the rule is
+  ``HostRegexp(`^.+$`) && !Host(`DOMAIN`)`` with **`priority=1`**.
+  Traefik's default router priority is the *length of the rule string*, so
+  every real app's `Host(\`books.example.com\`)` (30+ characters) outranks
+  this one automatically. Nothing has to be registered with the catch-all,
+  and adding an app never requires touching it.
+- **The `!Host(DOMAIN)` guard prevents a redirect loop.** The apex site
+  lives off-box, so this Traefik has no router for the bare domain; if a
+  request for it ever arrives anyway (direct IP hit, stale DNS), the
+  catch-all would otherwise redirect it to itself forever. Excluded, it
+  gets Traefik's bare 404 — fine for a host that shouldn't land here.
+- **`?from=` carries only the first DNS label** (`typo`, not
+  `typo.DOMAIN`) — that's the shape the /dev/null page validates
+  client-side (`^[a-z0-9-]{1,63}$`), and it stays meaningful even for
+  third-party domains pointed at the IP. The redirect is a 302, not a 301,
+  so browsers never permanently cache a typo'd host.
+- **Deliberately no `certresolver` on this router** — `tls=true` only.
+  With a resolver attached, Traefik would try to obtain a Let's Encrypt
+  certificate for *any* hostname anyone pointed at the IP. That burns the
+  ACME rate limit and is a trivial way for a stranger to block issuance of
+  your real certificates. The consequence is that unrouted hosts are
+  served Traefik's built-in self-signed certificate, so the browser shows
+  a warning before the redirect. That is the correct outcome: there is no
+  legitimate site on that hostname to trust.
+- **Port 80 still redirects.** Traefik's entrypoint-level HTTP→HTTPS
+  redirect is generated as a router at near-maximum priority, so it wins
+  on `web` for every host, including unrouted ones. `http://typo.DOMAIN` →
+  301 → the warning → the /dev/null page. Don't try to invert this by
+  lowering the redirect priority; a catch-all that outranks it on port 80
+  would break the redirect for the real apps too.
+- `rate-limit@file` applies — this router meets every port scanner that
+  finds the IP. **No `secure-headers@file`**: it asserts HSTS with
+  `includeSubdomains` and `preload`, which must not be sent for hostnames
+  that aren't ours.
+- This replaced an earlier nginx `fallback` container that served a static
+  404 page. The redirect needs no container, no image to keep patched, and
+  turns a dead subdomain into a branded landing page instead of a dead end.
+
 ## Auto-updates: Watchtower
 
 - **Which Watchtower:** `nickfedor/watchtower` (also

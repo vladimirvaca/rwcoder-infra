@@ -55,7 +55,10 @@ zone if you delegated nameservers there), create:
 **The wildcard is the important one.** It's what makes every future app
 zero-DNS-work: `traefik.rwcoder.com`, `books.rwcoder.com`, and anything you
 add later all resolve through that single record. Adding an app never means
-touching DNS again.
+touching DNS again. The flip side — every subdomain resolves whether an app
+answers or not — is handled by a catch-all router in the core stack that
+redirects unknown hosts to the `/dev/null` page on the apex site (see
+"Catch-all for unrouted subdomains" in CLAUDE.md).
 
 Three things that catch people:
 
@@ -540,10 +543,11 @@ names the offending line in both cases.
   docker version --format '{{.Server.APIVersion}}'   # daemon's API version
   git pull && docker compose up -d                   # take the pinned fixes
   ```
-- **404 from Traefik:** the container must be on the `traefik-public` network
-  *and* carry `traefik.enable=true`, and router/service names must be unique
-  across all apps. `docker network inspect traefik-public` shows who's
-  attached.
+- **App subdomain lands on the `/dev/null` catch-all page:** the app's
+  router never registered, so the request fell through to the catch-all.
+  The container must be on the `traefik-public` network *and* carry
+  `traefik.enable=true`, and router/service names must be unique across all
+  apps. `docker network inspect traefik-public` shows who's attached.
 - **502 from Traefik:** the router matched but Traefik can't reach the app.
   Almost always `loadbalancer.server.port` doesn't match the port the app
   actually listens on inside the container.

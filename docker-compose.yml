@@ -83,6 +83,39 @@ services:
       # see traefik/dynamic/middlewares.yml.
       - "traefik.http.routers.traefik-dashboard.middlewares=rate-limit@file,secure-headers@file,traefik-dashboard-auth"
       - "traefik.http.middlewares.traefik-dashboard-auth.basicauth.usersfile=/etc/traefik/dashboard-users.htpasswd"
+      # Catch-all for unrouted hosts. The wildcard *.DOMAIN record resolves
+      # every subdomain to this instance whether an app answers or not;
+      # instead of Traefik's bare "404 page not found", redirect the visitor
+      # to the cover-letter site's /dev/null page with the attempted
+      # subdomain in ?from= (that page validates the value client-side).
+      #
+      # priority=1 sits below every real router: Traefik's default priority
+      # is the rule-string length, so any Host(`x.DOMAIN`) rule outranks
+      # this automatically — adding an app never touches the catch-all.
+      #
+      # The !Host(DOMAIN) guard prevents a redirect loop: the apex site is
+      # hosted off-box (Netlify), so if a request for the bare domain ever
+      # reaches this Traefik it must 404 rather than redirect to itself.
+      #
+      # tls=true but deliberately NO certresolver: with one attached,
+      # Traefik would request a Let's Encrypt cert for any hostname a
+      # stranger points at this IP, burning the ACME rate limit and
+      # blocking issuance for the real apps. Unrouted hosts get the
+      # self-signed default cert and a browser warning before the redirect
+      # — correct, since there is no legitimate site there to trust.
+      - "traefik.http.routers.unrouted.rule=HostRegexp(`^.+$`) && !Host(`${DOMAIN}`)"
+      - "traefik.http.routers.unrouted.priority=1"
+      - "traefik.http.routers.unrouted.entrypoints=websecure"
+      - "traefik.http.routers.unrouted.tls=true"
+      # The middleware always redirects, so the router needs no backend.
+      - "traefik.http.routers.unrouted.service=noop@internal"
+      # rate-limit first — this router meets every scanner that finds the IP.
+      - "traefik.http.routers.unrouted.middlewares=rate-limit@file,unrouted-redirect"
+      # Captures the first DNS label of whatever host was tried ($${1} —
+      # doubled $ so compose passes a literal ${1} through to Traefik).
+      # Non-permanent (302) so browsers never cache a typo'd host forever.
+      - "traefik.http.middlewares.unrouted-redirect.redirectregex.regex=^https?://([^./:]+).*"
+      - "traefik.http.middlewares.unrouted-redirect.redirectregex.replacement=https://${DOMAIN}/dev/null?from=$${1}"
     # Cap memory so the proxy can never starve the host. Honoured by
     # `docker compose` (v2) outside swarm. Tuned for a ~1GB instance; lower
     # on a 512MB plan. Host swap (see README prerequisites) is the safety net.
